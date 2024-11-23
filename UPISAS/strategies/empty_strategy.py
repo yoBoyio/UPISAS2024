@@ -18,28 +18,46 @@ class EmptyStrategy(Strategy):
         self.counter = 0
         
     # analyze method
-    def analyze(self):
-        self.counter += 1
-        car_stats = self.data['car_stats'][-1]
-        configs = self.data['configs'][-1]
-        self.knowledge.analysis_data["exploration_percentage"] = configs["exploration_percentage"]
-        print(self.data['car_stats'],'eeeee')
-        print(car_stats['step'],'step')
-        #  total_trip_average = self.data['total_trip_average']
-        # total_trips = self.data['total_trips']
-        # total_complaints = self.data['total_complaints']
-        step = car_stats['step']
-        self.knowledge.analysis_data["step"] = step
-        
-        if self.counter > 50000:
-            self.sufficient  = True
-            return True
-        self.sufficient  = False
+def analyze(self):
+    # Increment the analysis counter
+    self.counter += 1
 
-        return False
+    # Retrieve the latest car stats and configuration data
+    car_stats = self.data['car_stats'][-1]
+    configs = self.data['configs'][-1]
+
+    # Store the current exploration percentage and step in knowledge
+    self.knowledge.analysis_data["exploration_percentage"] = configs["exploration_percentage"]
+    step = car_stats['step']
+    self.knowledge.analysis_data["step"] = step
+
+    # Log or debug the input data
+    print(f"Current car stats: {car_stats}")
+    print(f"Current step: {step}")
+
+    # Retrieve performance metrics for analysis
+    trip_overhead = car_stats.get('trip_overhead', 0)
+    complaints_rate = car_stats.get('complaints_rate', 0)
+
+    # Store the performance metrics in the knowledge base for later analysis
+    self.knowledge.analysis_data["trip_overhead"] = trip_overhead
+    self.knowledge.analysis_data["complaints_rate"] = complaints_rate
+
+    # Check if conditions for sufficiency are met
+    # Here, the condition is example logic, refine it as necessary
+    if self.counter > 50000:
+        # Example threshold for metrics
+        if trip_overhead < 1.5 and complaints_rate < 0.05:
+            self.sufficient = True
+            return True
+
+    # If not sufficient, continue adaptation
+    self.sufficient = False
+    return False
         
     # Planner method 
     def plan(self):
+        pass
         # step = self.knowledge.analysis_data["step"] 
         # print(step, 'step')
         # if step > 50000 :
@@ -49,6 +67,6 @@ class EmptyStrategy(Strategy):
 
         # return False
 
-        pass
+        
     
    
