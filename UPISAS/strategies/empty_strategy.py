@@ -42,8 +42,19 @@ class EmptyStrategy(Strategy):
             """Calculate reward based on system performance."""
             return 1 - (trip_overhead / trip_average)
 
-        # analyze method
+    # analyze method
     def analyze(self, reward_threshold, decline_count, decline_limit):
+        """
+        Analyze system performance and track adjustments based on traffic data.
+
+        Args:
+            reward_threshold (float): The minimum acceptable reward.
+            decline_count (int): The current count of consecutive performance declines.
+            decline_limit (int): The limit of declines before triggering adjustments.
+
+        Returns:
+            tuple: (adjust_parameters, decline_count, reward, trip_overhead, trip_average)
+        """
         # Increment the analysis counter
         self.counter += 1
 
@@ -71,12 +82,18 @@ class EmptyStrategy(Strategy):
         # Calculate the reward based on the performance metrics
         reward = calculate_reward(trip_overhead, trip_average)
 
+        # Update decline count and check if parameters need adjustment
         if reward < reward_threshold:
             decline_count += 1
         else:
             decline_count = 0
 
         adjust_parameters = decline_count >= decline_limit
+
+        # Log analysis results
+        print(f"Reward: {reward}, Decline Count: {decline_count}, Adjust Parameters: {adjust_parameters}")
+        print(f"Trip Overhead: {trip_overhead}, Trip Average: {trip_average}")
+
         return adjust_parameters, decline_count, reward, trip_overhead, trip_average
 
         # # Check if conditions for sufficiency are met
@@ -94,50 +111,71 @@ class EmptyStrategy(Strategy):
 
 
     # UCB calculation
-    def calculate_ucb(rewards, counts, t):
-        """Calculate UCB scores for each arm."""
+    def calculate_ucb(self, rewards, counts, t):
+        """
+        Calculate UCB scores for each arm.
+
+        Args:
+            rewards (list): Total rewards for each arm.
+            counts (list): Number of times each arm has been selected.
+            t (int): Current timestep.
+
+        Returns:
+            list: UCB scores for all arms.
+        """
         ucb_scores = []
-        for i in range(num_arms):
+        for i in range(len(rewards)):
             if counts[i] == 0:
                 ucb_scores.append(float('inf'))  # Ensure each arm is tried at least once
             else:
                 average_reward = rewards[i] / counts[i]
                 confidence_bound = np.sqrt((2 * np.log(t)) / counts[i])
                 ucb_scores.append(average_reward + confidence_bound)
-        return ucb_scores
 
-        # Planner method 
+        # Log or debug the UCB scores
+        print(f"UCB Scores: {ucb_scores}")
+        return ucb_scores
+    
+        # Planner method
     def plan(self, ucb_scores, arms, decline_count, decline_limit):
-        """Select the best configuration and update parameters if needed."""
+        """
+        Select the best configuration and prepare the action schema.
+
+        Args:
+            ucb_scores (list): UCB scores for all arms.
+            arms (list): Configurations for each arm.
+            decline_count (int): Current count of performance declines.
+            decline_limit (int): Limit for triggering parameter adjustments.
+
+        Returns:
+            tuple: (selected_arm, current_config, action_schema)
+        """
+        # Select the arm with the highest UCB score
         selected_arm = np.argmax(ucb_scores)
         current_config = arms[selected_arm]
 
-        # Adjust parameters dynamically if performance declines
+        # Log selected arm
+        print(f"Selected Arm: {selected_arm}, Configuration: {current_config}")
+
+        # Dynamically adjust parameters if needed
         if decline_count >= decline_limit:
+            print("Adjusting parameters due to performance decline...")
             current_config["exploration_percentage"] = min(current_config["exploration_percentage"] + 0.05, 0.5)
             current_config["re_route_every_ticks"] = max(current_config["re_route_every_ticks"] - 5, 10)
             current_config["freshness_cut_off_value"] = max(current_config["freshness_cut_off_value"] - 1, 2)
+            decline_count = 0  # Reset decline count
 
-        # Prepare the action schema outside the EXECUTE phase
+        # Prepare the action schema
         action_schema = {
             "exploration_percentage": current_config["exploration_percentage"],
             "re_route_every_ticks": current_config["re_route_every_ticks"],
             "freshness_cut_off_value": current_config["freshness_cut_off_value"],
         }
 
+        # Log the action schema
+        print(f"Action Schema: {action_schema}")
         return selected_arm, current_config, action_schema
-    
-    
-
-        # EXECUTE function with external action schema
-    def execute(self, action_schema, selected_arm, rewards, counts, reward, strategy):
-        """Execute the action schema by calling the strategy's execute method."""
-        print(f"Executing: {action_schema}")
-        strategy.execute(action_schema, with_validation=False)
-
-        # Update rewards and counts for the selected arm
-        counts[selected_arm] += 1
-        rewards[selected_arm] += reward
+        
 
 
             # step = self.knowledge.analysis_data["step"] 
