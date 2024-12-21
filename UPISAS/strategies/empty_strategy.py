@@ -101,42 +101,37 @@ class MABTripStrategy(Strategy):
         return ucb_scores
 
     def plan(self):
-        """
-        1. Calculate UCB scores for each arm.
-        2. Pick the best arm.
-        3. (Optional) adjust the chosen config if performance is repeatedly poor.
-        4. Store the config in plan_data and return (bool, schema).
-        """
-        # 1) Compute UCB scores
+        """Plan adaptation using MAB strategy"""
+        # Calculate UCB and select arm
         ucb_scores = self.calculate_ucb()
-
-        # 2) Select the arm with the highest UCB score
         chosen_arm = np.argmax(ucb_scores)
-        best_config = self.arms[chosen_arm]
+        best_config = self.arms[chosen_arm].copy()
 
-        print(f"UCB Scores: {ucb_scores}")
-        print(f"Chosen Arm: {chosen_arm}, Config: {best_config}")
-
-        # 3) If performance has been poor, adjust the chosen config on the fly (optional)
+        # Adjust parameters if needed
         if self.decline_count >= self.decline_limit:
-            best_config["exploration_percentage"] = min(best_config["exploration_percentage"] + 0.05, 0.5)
-            best_config["re_route_every_ticks"]   = max(best_config["re_route_every_ticks"] - 5, 10)
-            best_config["freshness_cut_off_value"] = max(best_config["freshness_cut_off_value"] - 1, 2)
             print("Adjusting parameters due to repeated poor performance.")
-            self.decline_count = 0
+            # Increment exploration_percentage but cap it at 1.0
+            best_config["exploration_percentage"] = min(best_config["exploration_percentage"] + 0.05, 1.0)
+            # Decrease re_route_every_ticks but ensure it's at least 1
+            best_config["re_route_every_ticks"] = max(best_config["re_route_every_ticks"] - 5, 1)
+            # Decrease freshness_cut_off_value but ensure it's at least 1
+            best_config["freshness_cut_off_value"] = max(best_config["freshness_cut_off_value"] - 1, 1)
+            self.decline_count = 0  # Reset decline count
 
-        # 4) Store the chosen config in plan_data
-        self.knowledge.plan_data["exploration_percentage"]  = best_config["exploration_percentage"]
-        self.knowledge.plan_data["re_route_every_ticks"]    = best_config["re_route_every_ticks"]
-        self.knowledge.plan_data["freshness_cut_off_value"] = best_config["freshness_cut_off_value"]
-        self.knowledge.plan_data["chosen_arm"]              = chosen_arm
+        # Store in knowledge
+        self.knowledge.plan_data["chosen_arm"] = chosen_arm
+        self.knowledge.plan_data.update(best_config)
 
-        # Prepare a schema to return
+        # Complete schema with constraints
         schema = {
-            "exploration_percentage": best_config["exploration_percentage"],
-            "re_route_every_ticks": best_config["re_route_every_ticks"],
-            "freshness_cut_off_value": best_config["freshness_cut_off_value"]
+            "configs": {
+                "exploration_percentage": best_config["exploration_percentage"],  # Between 0 and 1
+                "re_route_every_ticks": best_config["re_route_every_ticks"],  # Minimum 1
+                "freshness_cut_off_value": best_config["freshness_cut_off_value"]  # Minimum 1
+            },
+            "status": "success",
+            "message": "Adaptation plan generated successfully."
         }
 
-        # Return (bool, schema) so the rest of the system can see what was chosen
-        return schema
+        print(f"Returning schema: {schema}")
+        return arm , schema
