@@ -30,7 +30,7 @@ if __name__ == '__main__':
                 current_config = strategy.monitor(with_validation=False)  # Disable validation temporarily
                 monitored_count += 1
 
-                if monitored_count >= 100:
+                if monitored_count >= 2:
                     logger.info(f"Analyzing after {monitored_count} samples...")
                     
                     if strategy.analyze():

@@ -12,9 +12,12 @@ from pathlib import Path
 from os.path import dirname, realpath
 import time
 import statistics
-from UPISAS.strategies.empty_strategy import EmptyStrategy
+import logging
+import pandas as pd
 
-from UPISAS.exemplars.your_exemplar import CNExemplar
+from UPISAS.strategies.empty_strategy import MABTripStrategy
+
+from UPISAS.exemplars.your_exemplar import StepExemplar
 
 
 
@@ -80,8 +83,8 @@ class RunnerConfig:
     def before_run(self) -> None:
         """Perform any activity required before starting a run.
         No context is available here as the run is not yet active (BEFORE RUN)"""
-        self.exemplar = CNExemplar(auto_start=True)
-        self.strategy = EmptyStrategy(self.exemplar)
+        self.exemplar = StepExemplar(auto_start=True)
+        self.strategy = MABTripStrategy(self.exemplar)
         time.sleep(3)
         output.console_log("Config.before_run() called!")
 
@@ -89,10 +92,9 @@ class RunnerConfig:
         """Perform any activity required for starting the run here.
         For example, starting the target system to measure.
         Activities after starting the run should also be performed here."""
-        self.strategy.STEP_THRESHOLD = float(context.run_variation['exploration_percentage'])
-
+        
         self.exemplar.start_run()
-        time.sleep(3)
+        time.sleep(10)  # Wait for service
         output.console_log("Config.start_run() called!")
 
     def start_measurement(self, context: RunnerContext) -> None:
@@ -106,14 +108,38 @@ class RunnerConfig:
         self.strategy.get_adaptation_options_schema()
         self.strategy.get_execute_schema()
 
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(__name__)
         
-
+        monitored_count = 0
         while time_slept < 5000:
             
-            self.strategy.monitor(verbose=True)
-            if self.strategy.analyze():
-                if self.strategy.plan():
-                    self.strategy.execute()
+            try:
+                # Monitor with validation
+                logger.info("Monitoring system state...")
+                current_config = self.strategy.monitor(with_validation=False)  # Disable validation temporarily
+                monitored_count += 1
+
+                if monitored_count >= 2:
+                    logger.info(f"Analyzing after {monitored_count} samples...")
+                    
+                    if self.strategy.analyze():
+                        selected_arm, new_config = self.strategy.plan()
+                        
+                        if new_config:
+                            logger.info(f"Executing new config: {new_config}")
+                            self.strategy.execute(new_config, with_validation=False)  # Disable validation temporarily
+                            
+                            # Verify changes
+                            time.sleep(2)
+                            updated_config = self.strategy.monitor(with_validation=False)
+                            logger.info(f"Updated configuration: {updated_config}")
+                            self.save_results(context=context, data=updated_config, run_number=monitored_count )
+                    monitored_count = 0  # Reset counter
+                
+            except Exception as e:
+                logger.error(f"Error in adaptation loop: {str(e)}")
+                time.sleep(5)  # Wait before retry
 
             time.sleep(3)
             time_slept+=3
@@ -178,5 +204,49 @@ class RunnerConfig:
         Invoked only once during the lifetime of the program."""
         output.console_log("Config.after_experiment() called!")
 
-    # ================================ DO NOT ALTER BELOW THIS LINE ================================
-    experiment_path:            Path             = None
+
+    def save_results(self, context: RunnerContext, data: dict, run_number: int) -> None:
+        output.console_log("Config.populate_run_data() called!")
+
+        # Extract data from the input dictionary
+        car_stats = data.get("car_stats", {})
+        configs = data.get("configs", {})
+
+        # Ensure both car_stats and configs have data
+        if not car_stats or not configs:
+            print("Car stats or configs data is missing. Aborting save.")
+            return
+
+        # Create a row combining car_stats and configs
+        row = {
+            'step': car_stats.get('step', ''),
+            'tick_duration': car_stats.get('tick_duration', ''),
+            'routing_duration': car_stats.get('routing_duration', ''),
+            'driving_car_counter': car_stats.get('driving_car_counter', ''),
+            'total_trip_average': car_stats.get('total_trip_average', ''),
+            'total_trips': car_stats.get('total_trips', ''),
+            'total_trip_overhead_average': car_stats.get('total_trip_overhead_average', ''),
+            'total_complaints': car_stats.get('total_complaints', ''),
+            'exploration_percentage': configs.get('exploration_percentage', ''),
+            'route_random_sigma': configs.get('route_random_sigma', ''),
+            'max_speed_and_length_factor': configs.get('max_speed_and_length_factor', ''),
+            'average_edge_duration_factor': configs.get('average_edge_duration_factor', ''),
+            'freshness_update_factor': configs.get('freshness_update_factor', ''),
+            'freshness_cut_off_value': configs.get('freshness_cut_off_value', ''),
+            're_route_every_ticks': configs.get('re_route_every_ticks', ''),
+            'total_car_counter': configs.get('total_car_counter', ''),
+            'edge_average_influence': configs.get('edge_average_influence', ''),
+            '_run_id': f'run{run_number}_repetition_0',
+            '__done': 'DONE'
+        }
+
+        # Convert the row to a DataFrame
+        df = pd.DataFrame([row])
+
+        # Specify the path to the CSV file
+        run_table_path = context.run_dir / 'run_table.csv'
+
+        # Append the row to the CSV file, creating the file if it doesn't exist
+        df.to_csv(run_table_path, mode='a', header=not run_table_path.exists(), index=False)
+
+        print(f"Data successfully written to {run_table_path}.")
