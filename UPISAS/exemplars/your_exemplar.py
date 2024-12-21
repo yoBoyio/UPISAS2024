@@ -13,7 +13,7 @@ class StepExemplar(Exemplar):
     def __init__(self, auto_start: " Whether to immediately start the container after creation" =False , container_name = "fasdfas2"):
         my_docker_kwargs = {
             "name":  container_name,
-            "image": "http-server-group-3_2",
+            "image": "http-server-group-3-2",
             "ports" : {8080: 8080},
             "network": "fas-net" 
             }

@@ -43,45 +43,37 @@ class MABTripStrategy(Strategy):
         return max(0.0, min(1.0, raw_reward))
 
     def analyze(self) -> bool:
-        """
-        1. Pull the newest monitoring data (trip_overhead, configs).
-        2. Compute the reward for the previously chosen arm.
-        3. Update MAB stats (counts, rewards).
-        4. Decide if we want to adapt and return True or False accordingly.
-        """
-        # 1) Retrieve the newest data
-        # "trip_overhead" is a list; we take the last item (dict), then get "trip_overhead" from it.
-        overhead_list = self.knowledge.monitored_data.get("trip_overhead", [{}])
-        trip_data     = overhead_list[-1] if overhead_list else {}
-        trip_overhead = trip_data.get("trip_overhead", 0.0)
+        """Analyze system state and update knowledge"""
+        # Get monitored data
+        data = self.knowledge.monitored_data
+        car_stats = data.get('car_stats', [{}])[-1]
+        configs = data.get('configs', [{}])[-1]
 
-        # "configs" is also a list; we assume the last item has "trip_average"
-        configs_list  = self.knowledge.monitored_data.get("configs", [{}])
-        config_data   = configs_list[-1] if configs_list else {}
-        trip_average  = config_data.get("trip_average", 1.0)
+        # Calculate metrics
+        trip_overhead = car_stats.get('total_trip_overhead_average', 0.0)
+        trip_average = car_stats.get('total_trip_average', 1.0)
+        total_trips = car_stats.get('total_trips', 0)
+        
+        # Store analysis results
+        self.knowledge.analysis_data = {
+            "trip_overhead": trip_overhead,
+            "trip_average": trip_average,
+            "total_trips": total_trips,
+            "reward": self.calculate_reward(trip_overhead, trip_average)
+        }
 
-        # 2) Calculate reward
-        reward = self.calculate_reward(trip_overhead, trip_average)
-
-        # 3) Determine which arm was used last time
-        #    (If none chosen yet, default to arm 0)
+        # Update MAB statistics
         chosen_arm = self.knowledge.plan_data.get("chosen_arm", 0)
+        self.counts[chosen_arm] += 1
+        self.rewards[chosen_arm] += self.knowledge.analysis_data["reward"]
+        self.t += 1
 
-        # Update MAB stats
-        self.counts[chosen_arm]  += 1
-        self.rewards[chosen_arm] += reward
-        self.t += 1  # Increase global counter
-
-        # 4) Update decline count and decide whether to adapt
-        if reward < self.reward_threshold:
+        # Check performance
+        if self.knowledge.analysis_data["reward"] < self.reward_threshold:
             self.decline_count += 1
         else:
             self.decline_count = 0
 
-        # Example policy: adapt if we hit the decline limit or adapt every iteration
-        # Here, we'll just return True every time so that plan() is always called.
-        # If you only want to adapt when performance is repeatedly poor, you can do:
-        # return (self.decline_count >= self.decline_limit)
         return True
 
     def calculate_ucb(self) -> list:
@@ -102,36 +94,38 @@ class MABTripStrategy(Strategy):
 
     def plan(self):
         """Plan adaptation using MAB strategy"""
-        # Calculate UCB and select arm
-        ucb_scores = self.calculate_ucb()
+        # Calculate UCB scores and select best arm
+        ucb_scores = self.calculate_ucb()  # Already returns a list
         chosen_arm = np.argmax(ucb_scores)
         best_config = self.arms[chosen_arm].copy()
 
-        # Adjust parameters if needed
-        if self.decline_count >= self.decline_limit:
-            print("Adjusting parameters due to repeated poor performance.")
-            # Increment exploration_percentage but cap it at 1.0
-            best_config["exploration_percentage"] = min(best_config["exploration_percentage"] + 0.05, 1.0)
-            # Decrease re_route_every_ticks but ensure it's at least 1
-            best_config["re_route_every_ticks"] = max(best_config["re_route_every_ticks"] - 5, 1)
-            # Decrease freshness_cut_off_value but ensure it's at least 1
-            best_config["freshness_cut_off_value"] = max(best_config["freshness_cut_off_value"] - 1, 1)
-            self.decline_count = 0  # Reset decline count
-
-        # Store in knowledge
-        self.knowledge.plan_data["chosen_arm"] = chosen_arm
-        self.knowledge.plan_data.update(best_config)
-
-        # Complete schema with constraints
-        schema = {
-            "configs": {
-                "exploration_percentage": best_config["exploration_percentage"],  # Between 0 and 1
-                "re_route_every_ticks": best_config["re_route_every_ticks"],  # Minimum 1
-                "freshness_cut_off_value": best_config["freshness_cut_off_value"]  # Minimum 1
-            },
-            "status": "success",
-            "message": "Adaptation plan generated successfully."
+        # Store all planning data in knowledge
+        self.knowledge.plan_data = {
+            "chosen_arm": chosen_arm,
+            "ucb_scores": ucb_scores,  # Remove .tolist() since it's already a list
+            "best_config": best_config,
+            "exploration_percentage": best_config["exploration_percentage"],
+            "re_route_every_ticks": best_config["re_route_every_ticks"],
+            "freshness_cut_off_value": best_config["freshness_cut_off_value"]
         }
 
-        print(f"Returning schema: {schema}")
-        return arm , schema
+        print(f"[MAB] UCB Scores: {self.knowledge.plan_data['ucb_scores']}")
+        print(f"[MAB] Chosen Arm: {self.knowledge.plan_data['chosen_arm']}")
+        print(f"[MAB] Selected Config: {self.knowledge.plan_data['best_config']}")
+
+        # Return complete schema for execution
+        schema = {
+            "configs": {
+                "exploration_percentage": self.knowledge.plan_data["exploration_percentage"],
+                "re_route_every_ticks": self.knowledge.plan_data["re_route_every_ticks"],
+                "freshness_cut_off_value": self.knowledge.plan_data["freshness_cut_off_value"],
+                "route_random_sigma": 0.2,
+                "max_speed_and_length_factor": 1.0,
+                "average_edge_duration_factor": 1.0,
+                "freshness_update_factor": 10.0,
+                "total_car_counter": 750,
+                "edge_average_influence": 140.0
+            }
+        }
+
+        return chosen_arm, schema["configs"]
