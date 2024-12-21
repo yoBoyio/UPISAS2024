@@ -1,192 +1,142 @@
 from UPISAS.strategy import Strategy
-import gym
-from gym import spaces
 import numpy as np
-import requests
 
-class EmptyStrategy(Strategy):
-    STEP_THRESHOLD = 0.3
-    INITIAL_VALUE = 0.1
+class MABTripStrategy(Strategy):
+    """
+    A multi-armed bandit (MAB) strategy that adapts system parameters
+    (exploration_percentage, re_route_every_ticks, freshness_cut_off_value)
+    based on trip_overhead / trip_average metrics.
+    """
 
-    # Initializing the strategy
     def __init__(self, exemplar):
         super().__init__(exemplar)
-        # self.Planner = Planner
-        self.data = self.knowledge.monitored_data
-        self.adaptation_options = self.knowledge.adaptation_options
-        self.itial_step = 0
-        self.counter = 0
 
-    # Define the "arms" (configurations)
-    arms = [
-        {"exploration_percentage": 0.1, "re_route_every_ticks": 50, "freshness_cut_off_value": 10},  # Low Traffic
-        {"exploration_percentage": 0.2, "re_route_every_ticks": 25, "freshness_cut_off_value": 5},   # Medium Traffic
-        {"exploration_percentage": 0.3, "re_route_every_ticks": 10, "freshness_cut_off_value": 2}   # High Traffic
-    ]    
+        # Define possible configurations ("arms")
+        self.arms = [
+            {"exploration_percentage": 0.1, "re_route_every_ticks": 50, "freshness_cut_off_value": 10},
+            {"exploration_percentage": 0.2, "re_route_every_ticks": 25, "freshness_cut_off_value": 5},
+            {"exploration_percentage": 0.3, "re_route_every_ticks": 10, "freshness_cut_off_value": 2},
+        ]
+        
+        self.num_arms = len(self.arms)
 
-    #The number of arms (configurations)        
-    num_arms = len(arms)
+        # Keep track of MAB statistics
+        self.counts  = [0] * self.num_arms      # Number of times each arm is chosen
+        self.rewards = [0.0] * self.num_arms    # Cumulative reward for each arm
+        self.t       = 1                        # Global counter for UCB
 
-    # Initialize variables
-    rewards = [0] * num_arms  # Total reward for each arm
-    counts = [0] * num_arms   # Number of times each arm is selected
-    t = 1                     # Current timestep
+        # Feedback control
+        self.reward_threshold = 0.6
+        self.decline_count    = 0
+        self.decline_limit    = 5
 
-    # Feedback control
-    reward_threshold = 0.6  # Threshold for acceptable performance
-    decline_count = 0
-    decline_limit = 5  # Number of iterations with low reward before updating parameters
-
-        # Reward calculation function
-    def calculate_reward(trip_overhead, trip_average):
-            """Calculate reward based on system performance."""
-            return 1 - (trip_overhead / trip_average)
-
-    # analyze method
-    def analyze(self, reward_threshold, decline_count, decline_limit):
+    def calculate_reward(self, trip_overhead: float, trip_average: float) -> float:
         """
-        Analyze system performance and track adjustments based on traffic data.
-
-        Args:
-            reward_threshold (float): The minimum acceptable reward.
-            decline_count (int): The current count of consecutive performance declines.
-            decline_limit (int): The limit of declines before triggering adjustments.
-
-        Returns:
-            tuple: (adjust_parameters, decline_count, reward, trip_overhead, trip_average)
+        Convert trip_overhead / trip_average into a reward in [0, 1].
+        Example: reward = 1 - (trip_overhead / trip_average).
         """
-        # Increment the analysis counter
-        self.counter += 1
+        if trip_average == 0:
+            return 0.0
+        raw_reward = 1.0 - (trip_overhead / trip_average)
 
-        # Retrieve the latest car stats and configuration data
-        car_stats = self.data['trip_overhead'][-1]
-        configs = self.data['configs'][-1]
+        # Clamp the reward between 0.0 and 1.0
+        return max(0.0, min(1.0, raw_reward))
 
-        # Store the current exploration percentage and step in knowledge
-        self.knowledge.analysis_data["exploration_percentage"] = configs["exploration_percentage"]
-        step = car_stats['step']
-        self.knowledge.analysis_data["step"] = step
+    def analyze(self) -> bool:
+        """
+        1. Pull the newest monitoring data (trip_overhead, configs).
+        2. Compute the reward for the previously chosen arm.
+        3. Update MAB stats (counts, rewards).
+        4. Decide if we want to adapt and return True or False accordingly.
+        """
+        # 1) Retrieve the newest data
+        # "trip_overhead" is a list; we take the last item (dict), then get "trip_overhead" from it.
+        overhead_list = self.knowledge.monitored_data.get("trip_overhead", [{}])
+        trip_data     = overhead_list[-1] if overhead_list else {}
+        trip_overhead = trip_data.get("trip_overhead", 0.0)
 
-        # Log or debug the input data
-        print(f"Current car stats: {car_stats}")
-        print(f"Current step: {step}")
+        # "configs" is also a list; we assume the last item has "trip_average"
+        configs_list  = self.knowledge.monitored_data.get("configs", [{}])
+        config_data   = configs_list[-1] if configs_list else {}
+        trip_average  = config_data.get("trip_average", 1.0)
 
-        # Retrieve performance metrics for analysis
-        trip_overhead = car_stats.get('trip_overhead', 0)
-        trip_average = configs.get('trip_average', 0)
+        # 2) Calculate reward
+        reward = self.calculate_reward(trip_overhead, trip_average)
 
-        # Store the performance metrics in the knowledge base for later analysis
-        self.knowledge.analysis_data["trip_overhead"] = trip_overhead
-        self.knowledge.analysis_data["trip_average"] = trip_average
+        # 3) Determine which arm was used last time
+        #    (If none chosen yet, default to arm 0)
+        chosen_arm = self.knowledge.plan_data.get("chosen_arm", 0)
 
-        # Calculate the reward based on the performance metrics
-        reward = calculate_reward(trip_overhead, trip_average)
+        # Update MAB stats
+        self.counts[chosen_arm]  += 1
+        self.rewards[chosen_arm] += reward
+        self.t += 1  # Increase global counter
 
-        # Update decline count and check if parameters need adjustment
-        if reward < reward_threshold:
-            decline_count += 1
+        # 4) Update decline count and decide whether to adapt
+        if reward < self.reward_threshold:
+            self.decline_count += 1
         else:
-            decline_count = 0
+            self.decline_count = 0
 
-        adjust_parameters = decline_count >= decline_limit
+        # Example policy: adapt if we hit the decline limit or adapt every iteration
+        # Here, we'll just return True every time so that plan() is always called.
+        # If you only want to adapt when performance is repeatedly poor, you can do:
+        # return (self.decline_count >= self.decline_limit)
+        return True
 
-        # Log analysis results
-        print(f"Reward: {reward}, Decline Count: {decline_count}, Adjust Parameters: {adjust_parameters}")
-        print(f"Trip Overhead: {trip_overhead}, Trip Average: {trip_average}")
-
-        return adjust_parameters, decline_count, reward, trip_overhead, trip_average
-
-        # # Check if conditions for sufficiency are met
-        # # Here, the condition is example logic, refine it as necessary
-        # if self.counter > 50000:
-        #     # Example threshold for metrics
-        #     if trip_overhead < 1.5 and complaints_rate < 0.05:
-        #         self.sufficient = True
-        #         return True
-
-        # # If not sufficient, continue adaptation
-        # self.sufficient = False
-        # return False
-            
-
-
-    # UCB calculation
-    def calculate_ucb(self, rewards, counts, t):
+    def calculate_ucb(self) -> list:
         """
-        Calculate UCB scores for each arm.
-
-        Args:
-            rewards (list): Total rewards for each arm.
-            counts (list): Number of times each arm has been selected.
-            t (int): Current timestep.
-
-        Returns:
-            list: UCB scores for all arms.
+        Compute UCB (Upper Confidence Bound) scores for each arm.
+        If an arm has never been used, give it 'inf' so it will be chosen next.
         """
         ucb_scores = []
-        for i in range(len(rewards)):
-            if counts[i] == 0:
-                ucb_scores.append(float('inf'))  # Ensure each arm is tried at least once
+        for i in range(self.num_arms):
+            if self.counts[i] == 0:
+                # Never tried this arm
+                ucb_scores.append(float('inf'))
             else:
-                average_reward = rewards[i] / counts[i]
-                confidence_bound = np.sqrt((2 * np.log(t)) / counts[i])
-                ucb_scores.append(average_reward + confidence_bound)
-
-        # Log or debug the UCB scores
-        print(f"UCB Scores: {ucb_scores}")
+                avg_reward = self.rewards[i] / self.counts[i]
+                confidence = np.sqrt((2.0 * np.log(self.t)) / self.counts[i])
+                ucb_scores.append(avg_reward + confidence)
         return ucb_scores
-    
-        # Planner method
-    def plan(self, ucb_scores, arms, decline_count, decline_limit):
+
+    def plan(self):
         """
-        Select the best configuration and prepare the action schema.
-
-        Args:
-            ucb_scores (list): UCB scores for all arms.
-            arms (list): Configurations for each arm.
-            decline_count (int): Current count of performance declines.
-            decline_limit (int): Limit for triggering parameter adjustments.
-
-        Returns:
-            tuple: (selected_arm, current_config, action_schema)
+        1. Calculate UCB scores for each arm.
+        2. Pick the best arm.
+        3. (Optional) adjust the chosen config if performance is repeatedly poor.
+        4. Store the config in plan_data and return (bool, schema).
         """
-        # Select the arm with the highest UCB score
-        selected_arm = np.argmax(ucb_scores)
-        current_config = arms[selected_arm]
+        # 1) Compute UCB scores
+        ucb_scores = self.calculate_ucb()
 
-        # Log selected arm
-        print(f"Selected Arm: {selected_arm}, Configuration: {current_config}")
+        # 2) Select the arm with the highest UCB score
+        chosen_arm = np.argmax(ucb_scores)
+        best_config = self.arms[chosen_arm]
 
-        # Dynamically adjust parameters if needed
-        if decline_count >= decline_limit:
-            print("Adjusting parameters due to performance decline...")
-            current_config["exploration_percentage"] = min(current_config["exploration_percentage"] + 0.05, 0.5)
-            current_config["re_route_every_ticks"] = max(current_config["re_route_every_ticks"] - 5, 10)
-            current_config["freshness_cut_off_value"] = max(current_config["freshness_cut_off_value"] - 1, 2)
-            decline_count = 0  # Reset decline count
+        print(f"UCB Scores: {ucb_scores}")
+        print(f"Chosen Arm: {chosen_arm}, Config: {best_config}")
 
-        # Prepare the action schema
-        action_schema = {
-            "exploration_percentage": current_config["exploration_percentage"],
-            "re_route_every_ticks": current_config["re_route_every_ticks"],
-            "freshness_cut_off_value": current_config["freshness_cut_off_value"],
+        # 3) If performance has been poor, adjust the chosen config on the fly (optional)
+        if self.decline_count >= self.decline_limit:
+            best_config["exploration_percentage"] = min(best_config["exploration_percentage"] + 0.05, 0.5)
+            best_config["re_route_every_ticks"]   = max(best_config["re_route_every_ticks"] - 5, 10)
+            best_config["freshness_cut_off_value"] = max(best_config["freshness_cut_off_value"] - 1, 2)
+            print("Adjusting parameters due to repeated poor performance.")
+            self.decline_count = 0
+
+        # 4) Store the chosen config in plan_data
+        self.knowledge.plan_data["exploration_percentage"]  = best_config["exploration_percentage"]
+        self.knowledge.plan_data["re_route_every_ticks"]    = best_config["re_route_every_ticks"]
+        self.knowledge.plan_data["freshness_cut_off_value"] = best_config["freshness_cut_off_value"]
+        self.knowledge.plan_data["chosen_arm"]              = chosen_arm
+
+        # Prepare a schema to return
+        schema = {
+            "exploration_percentage": best_config["exploration_percentage"],
+            "re_route_every_ticks": best_config["re_route_every_ticks"],
+            "freshness_cut_off_value": best_config["freshness_cut_off_value"]
         }
 
-        # Log the action schema
-        print(f"Action Schema: {action_schema}")
-        return selected_arm, current_config, action_schema
-        
-
-
-            # step = self.knowledge.analysis_data["step"] 
-            # print(step, 'step')
-            # if step > 50000 :
-            #     self.knowledge.plan_data["exploration_percentage"]  = self.knowledge.analysis_data["exploration_percentage"] + 0.1
-            #     print(self.knowledge.plan_data["exploration_percentage"],'exploration')
-            #     return True
-
-            # return False
-
-        
-    
-   
+        # Return (bool, schema) so the rest of the system can see what was chosen
+        return schema
