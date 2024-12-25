@@ -1,15 +1,4 @@
 from UPISAS.strategy import Strategy
-<<<<<<< HEAD
-
-
-class EmptyStrategy(Strategy):
-
-    def analyze(self):
-        return True
-
-    def plan(self):
-        return True
-=======
 import numpy as np
 
 class MABTripStrategy(Strategy):
