@@ -1,0 +1,10 @@
+#!/bin/sh
+'''exec' "/Users/rohan/Desktop/VU/FAS/Group 3-2/UPISAS2024/UPISAS/experiment_runner_configs/new_env/bin/python3.12" "$0" "$@"
+' '''
+# -*- coding: utf-8 -*-
+import re
+import sys
+from markdown_it.cli.parse import main
+if __name__ == '__main__':
+    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
+    sys.exit(main())

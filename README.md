@@ -22,6 +22,7 @@ In a terminal, navigate to the parent folder of the project and issue:
 python run.py
 ```
 
+<<<<<<< HEAD
 ### Using experiment runner 
 
 ```
@@ -32,4 +33,6 @@ cd ..
 sh run.sh 
 ```
 
+=======
+>>>>>>> test
 

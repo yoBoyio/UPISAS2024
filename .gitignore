@@ -1,6 +1,11 @@
 .idea
 demo-managed-system/node_modules
 demo-managed-system/package-lock.json
+<<<<<<< HEAD
 venv
 __pycache__
 UPISAS/experiment_runner_configs/experiments
+=======
+myvenv
+__pycache__
+>>>>>>> test

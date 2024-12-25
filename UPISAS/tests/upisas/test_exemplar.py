@@ -25,6 +25,7 @@ class TestExemplar(unittest.TestCase):
         self.assertEqual(self.exemplar.get_container_status(), "running")
 
     def test_init_image_not_found_on_dockerhub(self):
+<<<<<<< HEAD
 
         with self.assertRaises(DockerImageNotFoundOnDockerHub):
             class NonExistingExemplar(Exemplar):
@@ -36,6 +37,13 @@ class TestExemplar(unittest.TestCase):
                 def start_run(self, app):
                     None
             NonExistingExemplar(auto_start=False)
+=======
+        docker_config = {"name": "upisas_test",
+                         "image": "very_strange_image_name_3456876",
+                         "ports": {3000: 3000}}
+        with self.assertRaises(DockerImageNotFoundOnDockerHub):
+            Exemplar("http://localhost:3000", docker_config, auto_start=False)
+>>>>>>> test
 
     def test_start_container_successfully(self):
         self.exemplar = DemoExemplar(auto_start=False)

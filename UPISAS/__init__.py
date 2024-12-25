@@ -43,10 +43,17 @@ def validate_schema(json_instance, json_schema):
                 jsonschema.validate(json_instance, json_schema)
                 logging.info("JSON object validated by JSON Schema")
             else:
+<<<<<<< HEAD
                 logging.error(incomplete_warning_message + " Keys misaligned")
                 raise IncompleteJSONSchema
         else:
             logging.error(incomplete_warning_message + " Type and Properties absent")
+=======
+                logging.error(incomplete_warning_message)
+                raise IncompleteJSONSchema
+        else:
+            logging.error(incomplete_warning_message)
+>>>>>>> test
             raise IncompleteJSONSchema
     except jsonschema.exceptions.ValidationError as error:
         logging.error(f"ValidationError in validating JSON object with JSON Schema: {error}")
